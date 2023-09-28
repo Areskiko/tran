@@ -294,14 +294,14 @@ fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> Resu
     let mut file = std::fs::read(&target)?;
     let mut png = file.iter_mut();
 
-    for i in 0..8 {
+    for png_format_identifier_byte in PNG_FORMAT_IDENTIFIER {
         if let Some(read_byte) = png.next() {
-            if *read_byte != PNG_FORMAT_IDENTIFIER[i] {
+            if *read_byte != png_format_identifier_byte {
                 return Err(TranError::FileReadError(format!(
                     "{} is not a png as {:x} != {:x}",
                     target.as_ref().to_string_lossy(),
                     *read_byte,
-                    PNG_FORMAT_IDENTIFIER[i]
+                    png_format_identifier_byte
                 )));
             }
         } else {
