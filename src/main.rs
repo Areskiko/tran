@@ -134,10 +134,10 @@ const IDAT: u32 = 0x49444154;
 #[derive(Debug)]
 enum PngColorType {
     Grayscale,      // 0
-    RGB,            // 2
+    Rgb,            // 2
     Palette,        // 3
     GrayscaleAlpha, // 4
-    RGBA,           // 6
+    Rgba,           // 6
 }
 
 impl TryFrom<u8> for PngColorType {
@@ -146,10 +146,10 @@ impl TryFrom<u8> for PngColorType {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(PngColorType::Grayscale),
-            2 => Ok(PngColorType::RGB),
+            2 => Ok(PngColorType::Rgb),
             3 => Ok(PngColorType::Palette),
             4 => Ok(PngColorType::GrayscaleAlpha),
-            6 => Ok(PngColorType::RGBA),
+            6 => Ok(PngColorType::Rgba),
             _ => Err(TranError::FileReadError(format!(
                 "PNG Color type is invalid {}",
                 value
@@ -178,7 +178,7 @@ impl<'a> ColorTransform<'a> {
             TranError::ConfigError(format!("Color hex {} is invalid", self.new_color))
         })?;
 
-        let red: u8 = ((bytes & 0xFF0000) >> 2 * 8) as u8;
+        let red: u8 = ((bytes & 0xFF0000) >> (2 * 8)) as u8;
         let green: u8 = ((bytes & 0x00FF00) >> 8) as u8;
         let blue: u8 = (bytes & 0x0000FF) as u8;
 
@@ -189,7 +189,7 @@ impl<'a> ColorTransform<'a> {
             TranError::ConfigError(format!("Color hex {} is invalid", self.current_color))
         })?;
 
-        let red: u8 = ((bytes & 0xFF0000) >> 2 * 8) as u8;
+        let red: u8 = ((bytes & 0xFF0000) >> (2 * 8)) as u8;
         let green: u8 = ((bytes & 0x00FF00) >> 8) as u8;
         let blue: u8 = (bytes & 0x0000FF) as u8;
 
@@ -214,7 +214,7 @@ fn read_chunk<'a>(png: &'a mut std::slice::IterMut<u8>) -> Result<Chunk<'a>, Tra
     .iter()
     .filter_map(|byte| *byte)
     .enumerate()
-    .map(|(index, byte)| (byte as u32) << 8 * (3 - index))
+    .map(|(index, byte)| (byte as u32) << (8 * (3 - index)))
     .reduce(|acc, byte| acc | byte)
     .ok_or(TranError::FileReadError(
         "Something went wrong while reducing length".to_string(),
@@ -229,7 +229,7 @@ fn read_chunk<'a>(png: &'a mut std::slice::IterMut<u8>) -> Result<Chunk<'a>, Tra
     .iter()
     .filter_map(|byte| *byte)
     .enumerate()
-    .map(|(index, byte)| (byte as u32) << 8 * (3 - index))
+    .map(|(index, byte)| (byte as u32) << (8 * (3 - index)))
     .reduce(|acc, byte| acc | byte)
     .ok_or(TranError::FileReadError(
         "Something went wrong while reducing chunk type".to_string(),
@@ -271,7 +271,7 @@ fn crc(buf: &[&mut u8]) -> u32 {
             if (c & 1) != 0 {
                 c = 0xEDB88320 ^ (c >> 1);
             } else {
-                c = c >> 1;
+                c >>= 1;
             }
         }
         crc_table[n as usize] = c;
@@ -332,7 +332,7 @@ fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> Resu
         return Ok(());
     }
 
-    if let PngColorType::RGB | PngColorType::RGBA = color_type {
+    if let PngColorType::Rgb | PngColorType::Rgba = color_type {
         return Err(TranError::FileReadError(
             "Can't decompress png of type RGB".to_string(),
         ));
@@ -361,7 +361,7 @@ fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> Resu
                                 && color_transform.current_color_bytes().unwrap().1 == **green
                                 && color_transform.current_color_bytes().unwrap().2 == **blue
                         }) {
-                            let (new_red, new_green, new_blue) = mapping.new_color_bytes()?;
+                            let (_new_red, _new_green, _new_blue) = mapping.new_color_bytes()?;
                             **red = mapping.new_color_bytes()?.0;
                             **green = mapping.new_color_bytes()?.1;
                             **blue = mapping.new_color_bytes()?.2;
@@ -372,8 +372,8 @@ fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> Resu
                     let mut chunk_type = (
                         (((chunk.chunk_type & 0xFF000000) >> (3 * 8)) as u8),
                         (((chunk.chunk_type & 0x00FF0000) >> (2 * 8)) as u8),
-                        (((chunk.chunk_type & 0x0000FF00) >> (1 * 8)) as u8),
-                        (((chunk.chunk_type & 0x000000FF) >> (0 * 8)) as u8),
+                        (((chunk.chunk_type & 0x0000FF00) >> 8) as u8),
+                        ((chunk.chunk_type & 0x000000FF) as u8),
                     );
                     crc_data.push(&mut chunk_type.0);
                     crc_data.push(&mut chunk_type.1);
@@ -385,11 +385,11 @@ fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> Resu
                     let new_crc = crc(crc_data.as_slice());
                     *chunk.crc[0] = ((new_crc & (0xFF000000)) >> (3 * 8)) as u8;
                     *chunk.crc[1] = ((new_crc & (0x00FF0000)) >> (2 * 8)) as u8;
-                    *chunk.crc[2] = ((new_crc & (0x0000FF00)) >> (1 * 8)) as u8;
-                    *chunk.crc[3] = ((new_crc & (0x000000FF)) >> (0 * 8)) as u8;
+                    *chunk.crc[2] = ((new_crc & (0x0000FF00)) >> 8) as u8;
+                    *chunk.crc[3] = (new_crc & (0x000000FF)) as u8;
                 }
             }
-            PngColorType::RGB | PngColorType::RGBA => {
+            PngColorType::Rgb | PngColorType::Rgba => {
                 if chunk.chunk_type == IDAT {
                     todo!()
                 }
@@ -442,10 +442,10 @@ fn main() -> Result<(), TranError> {
             continue;
         }
 
-        if let Some(ext) = path.extension().map(|ext| ext.to_str()).flatten() {
+        if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
             if ext == "png" {
                 let trans = ColorTransform {
-                    new_color: new_color,
+                    new_color,
                     current_color: &config.current_color,
                 };
                 let transform = vec![&trans];
