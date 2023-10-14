@@ -1,0 +1,15 @@
+Performance counter stats for './target/release/tran':
+
+              2.72 msec task-clock:u                     #    0.873 CPUs utilized
+                 0      context-switches:u               #    0.000 /sec
+                 0      cpu-migrations:u                 #    0.000 /sec
+               157      page-faults:u                    #   57.762 K/sec
+         5,855,731      cycles:u                         #    2.154 GHz
+         6,798,998      instructions:u                   #    1.16  insn per cycle
+         1,585,157      branches:u                       #  583.197 M/sec
+           103,287      branch-misses:u                  #    6.52% of all branches
+
+       0.003114919 seconds time elapsed
+
+       0.003167000 seconds user
+       0.000000000 seconds sys
