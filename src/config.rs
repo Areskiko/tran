@@ -63,7 +63,7 @@ enum ColorOrMapVec {
     Map(Vec<Vec<Color>>),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Color {
     red: u8,
     green: u8,
@@ -101,7 +101,7 @@ impl Color {
             (s.get(0..2), s.get(2..4), s.get(4..6))
         } else if s.len() == 7 {
             // Preceding #
-            (s.get(1..3), s.get(3..5), s.get(6..7))
+            (s.get(1..3), s.get(3..5), s.get(5..7))
         } else {
             return Err(TranError::ConfigError(format!(
                 "Could not interpret {} as hex color",
@@ -144,6 +144,7 @@ impl From<Color> for String {
     }
 }
 
+#[derive(Debug)]
 pub enum Config {
     GradientConfig(GradientConfig),
     MapConfig(MapConfig),
@@ -165,6 +166,7 @@ impl Config {
     }
 }
 
+#[derive(Debug)]
 pub struct GradientConfig {
     current_color: Color,
     colors: Vec<Color>,
@@ -189,6 +191,7 @@ impl GradientConfig {
     }
 }
 
+#[derive(Debug)]
 pub struct MapConfig {
     current_color: Vec<Color>,
     colors: Vec<Vec<Color>>,
@@ -323,8 +326,11 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                     Mode::Map => {
                                         let c = buff.split('#');
                                         current_color = ColorOrMap::Map(
-                                            c.map(Color::try_from_hex_str)
-                                                .collect::<Result<Vec<Color>, TranError>>()?,
+                                            c.map(Color::try_from_hex_str).collect::<Result<
+                                                Vec<Color>,
+                                                TranError,
+                                            >>(
+                                            )?,
                                         );
                                     }
                                 }
@@ -349,6 +355,92 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                     buff.push(char);
                     state = ParseState::Text;
                 }
+            }
+        }
+    }
+
+    if buff.len() != 0 {
+        match section {
+            Section::Mode => {
+                mode = Some(buff.as_str().try_into()?);
+                buff.clear();
+            }
+            Section::Colors => {
+                if let Some(m) = &mode {
+                    match m {
+                        Mode::Gradient => match &mut colors {
+                            Some(c) => {
+                                if let ColorOrMapVec::Color(v) = c {
+                                    v.push(Color::try_from_hex_str(&buff)?);
+                                    buff.clear();
+                                } else {
+                                    return Err(TranError::ConfigError(
+                                        "Inconsistent state".to_string(),
+                                    ));
+                                }
+                            }
+                            None => {
+                                colors = Some(ColorOrMapVec::Color(vec![Color::try_from_hex_str(
+                                    &buff,
+                                )?]));
+                                buff.clear();
+                            }
+                        },
+                        Mode::Map => {
+                            let color_map = buff
+                                .split('#')
+                                .map(Color::try_from_hex_str)
+                                .collect::<Result<Vec<Color>, TranError>>()?;
+                            match &mut colors {
+                                Some(c) => {
+                                    if let ColorOrMapVec::Map(v) = c {
+                                        v.push(color_map);
+                                    } else {
+                                        return Err(TranError::ConfigError(
+                                            "Inconsistent state".to_string(),
+                                        ));
+                                    }
+                                }
+                                None => {
+                                    colors = Some(ColorOrMapVec::Map(vec![color_map]));
+                                }
+                            }
+                            buff.clear();
+                        }
+                    }
+                } else {
+                    return Err(TranError::ConfigError(
+                        "Found color section before mode section. Can't determine color format"
+                            .to_string(),
+                    ));
+                }
+            }
+            Section::CurrentColor => {
+                if let Some(m) = &mode {
+                    match m {
+                        Mode::Gradient => {
+                            current_color = ColorOrMap::Color(Color::try_from_hex_str(&buff)?);
+                            buff.clear();
+                        }
+                        Mode::Map => {
+                            let c = buff.split('#');
+                            current_color =
+                                ColorOrMap::Map(c.map(Color::try_from_hex_str).collect::<Result<
+                                    Vec<Color>,
+                                    TranError,
+                                >>(
+                                )?);
+                        }
+                    }
+                } else {
+                    return Err(TranError::ConfigError(
+                        "Found color section before mode section. Can't determine color format"
+                            .to_string(),
+                    ));
+                }
+            }
+            Section::TargetFiles => {
+                target_files.push(buff);
             }
         }
     }

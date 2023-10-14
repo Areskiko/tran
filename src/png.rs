@@ -232,7 +232,6 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
                                 (**b.0 as u64 + **b.1 as u64 + **b.2 as u64)
                                     .cmp(&(**a.0 as u64 + **a.1 as u64 + **a.2 as u64))
                             });
-                            println!("{:?}", colors);
                             let mut map: Vec<GeneratedColorMap> = Vec::with_capacity(colors.len());
                             let first_color = colors
                                 .get(0)
