@@ -1,50 +1,435 @@
-use serde::{Serialize, Deserialize};
+use std::{io::Write, path::Path};
 
 use crate::errors::TranError;
 
 const CYAN: &str = "#6EE2FF";
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct IncompleteConfig {
-    pub target_files: Option<Vec<String>>,
-    pub current_color: Option<String>,
-    pub colors: Option<Vec<String>>,
+#[derive(PartialEq)]
+enum ParseState {
+    Start,
+    BraceOpen,
+    BraceClosed,
+    NewLine,
+    Text,
 }
 
-impl Default for IncompleteConfig {
-    fn default() -> Self {
-        IncompleteConfig {
-            target_files: Some(Vec::new()),
-            colors: Some(vec![CYAN.to_string()]),
-            current_color: Some(CYAN.to_string()),
+#[derive(PartialEq)]
+pub enum Section {
+    Mode,
+    CurrentColor,
+    Colors,
+    TargetFiles,
+}
+
+impl TryFrom<&str> for Section {
+    type Error = TranError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "mode" => Ok(Self::Mode),
+            "colors" => Ok(Self::Colors),
+            "target_files" => Ok(Self::TargetFiles),
+            "current_color" => Ok(Self::CurrentColor),
+            _ => Err(TranError::ConfigError(format!("Unrecognized section'{}', valid sections are 'mode', 'current_color', 'colors', and 'target_files'", value)))
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Config {
-    pub target_files: Vec<String>,
-    pub current_color: String,
-    pub colors: Vec<String>,
+pub enum Mode {
+    Gradient,
+    Map,
 }
 
-impl TryFrom<IncompleteConfig> for Config {
+impl TryFrom<&str> for Mode {
     type Error = TranError;
 
-    fn try_from(value: IncompleteConfig) -> Result<Self, Self::Error> {
-        Ok(Config {
-            target_files: match value.target_files {
-                Some(v) => v,
-                None => Vec::new(),
-            },
-            colors: match value.colors {
-                Some(v) => v,
-                None => Vec::new(),
-            },
-            current_color: match value.current_color {
-                Some(v) => v,
-                None => return Err(TranError::ConfigError("Current color not set".to_string())),
-            },
-        })
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "map" => Ok(Mode::Map),
+            "gradient" => Ok(Mode::Gradient),
+            _ => Err(TranError::ConfigError(format!(
+                "Unrecognized mode '{}', valid modes are 'map' and 'gradient'",
+                value
+            ))),
+        }
     }
+}
+
+enum ColorOrMap {
+    Color(Color),
+    Map(Vec<Color>),
+}
+
+enum ColorOrMapVec {
+    Color(Vec<Color>),
+    Map(Vec<Vec<Color>>),
+}
+
+#[derive(Clone, Copy)]
+pub struct Color {
+    red: u8,
+    green: u8,
+    blue: u8,
+}
+
+impl Color {
+    pub fn black() -> Self {
+        Color {
+            red: 0,
+            green: 0,
+            blue: 0,
+        }
+    }
+    pub fn white() -> Self {
+        Color {
+            red: 255,
+            green: 255,
+            blue: 255,
+        }
+    }
+
+    pub fn from_bytes(red: u8, green: u8, blue: u8) -> Self {
+        Color { red, green, blue }
+    }
+
+    pub fn bytes(&self) -> (u8, u8, u8) {
+        (self.red, self.green, self.blue)
+    }
+
+    pub fn try_from_hex_str<S: AsRef<str>>(s: S) -> Result<Self, TranError> {
+        let s = s.as_ref();
+        let (r, g, b) = if s.len() == 6 {
+            // No preceding #
+            (s.get(0..2), s.get(2..4), s.get(4..6))
+        } else if s.len() == 7 {
+            // Preceding #
+            (s.get(1..3), s.get(3..5), s.get(6..7))
+        } else {
+            return Err(TranError::ConfigError(format!(
+                "Could not interpret {} as hex color",
+                s
+            )));
+        };
+
+        if let (Some(r), Some(g), Some(b)) = (r, g, b) {
+            Ok(Color::from_bytes(
+                u8::from_str_radix(r, 16)?,
+                u8::from_str_radix(g, 16)?,
+                u8::from_str_radix(b, 16)?,
+            ))
+        } else {
+            Err(TranError::ConfigError(format!(
+                "Something went wrong while parsing {}",
+                s
+            )))
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        format!("#{:02x}{:02x}{:02x}", self.red, self.green, self.blue)
+    }
+}
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
+
+impl TryFrom<&str> for Color {
+    type Error = TranError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Color::try_from_hex_str(value)
+    }
+}
+
+impl From<Color> for String {
+    fn from(value: Color) -> Self {
+        value.to_string()
+    }
+}
+
+pub enum Config {
+    GradientConfig(GradientConfig),
+    MapConfig(MapConfig),
+}
+
+impl Config {
+    pub fn get_target_files(&self) -> &[String] {
+        match self {
+            Config::GradientConfig(gc) => gc.get_target_files(),
+            Config::MapConfig(mc) => mc.get_target_files(),
+        }
+    }
+
+    pub fn get_mode(&self) -> &str {
+        match self {
+            Config::GradientConfig(_) => "gradient",
+            Config::MapConfig(_) => "map",
+        }
+    }
+}
+
+pub struct GradientConfig {
+    current_color: Color,
+    colors: Vec<Color>,
+    target_files: Vec<String>,
+}
+
+impl GradientConfig {
+    pub fn set_current_colors(&mut self, color: Color) {
+        self.current_color = color
+    }
+
+    pub fn get_current_color(&self) -> &Color {
+        &self.current_color
+    }
+
+    pub fn get_colors(&self) -> &[Color] {
+        &self.colors
+    }
+
+    pub fn get_target_files(&self) -> &[String] {
+        &self.target_files
+    }
+}
+
+pub struct MapConfig {
+    current_color: Vec<Color>,
+    colors: Vec<Vec<Color>>,
+    target_files: Vec<String>,
+}
+
+impl MapConfig {
+    pub fn set_current_colors(&mut self, color: Vec<Color>) {
+        self.current_color = color
+    }
+
+    pub fn get_current_colors(&self) -> &[Color] {
+        &self.current_color
+    }
+
+    pub fn get_colors(&self) -> &[Vec<Color>] {
+        &self.colors
+    }
+
+    pub fn get_target_files(&self) -> &[String] {
+        &self.target_files
+    }
+}
+
+const BUFF_SIZE: usize = 50;
+
+pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
+    let mut contents = std::fs::read_to_string(target)?;
+    let mut chars = contents.trim().chars();
+    let mut state = ParseState::Start;
+    let mut section = Section::Mode;
+    let mut buff = String::with_capacity(BUFF_SIZE);
+
+    let mut mode: Option<Mode> = None;
+    let mut current_color: ColorOrMap = ColorOrMap::Color(Color::black());
+    let mut colors: Option<ColorOrMapVec> = None;
+    let mut target_files: Vec<String> = Vec::new();
+
+    for char in chars.into_iter() {
+        match state {
+            ParseState::Start => {
+                if char != '[' {
+                    return Err(TranError::ConfigError(format!(
+                        "Expected config to start with '[', found {}",
+                        char
+                    )));
+                }
+                state = ParseState::BraceOpen;
+            }
+            ParseState::BraceOpen => {
+                if char == ']' {
+                    section = buff.as_str().try_into()?;
+                    buff.clear();
+                    state = ParseState::BraceClosed;
+                } else {
+                    buff.push(char);
+                }
+            }
+            ParseState::BraceClosed => {
+                if char != '\n' {
+                    return Err(TranError::ConfigError(format!(
+                        "Expected newline after section declaration, found {}",
+                        char
+                    )));
+                } else {
+                    state = ParseState::NewLine;
+                }
+            }
+            ParseState::Text => {
+                if char == '\n' {
+                    // Add contents from buff to propper storage
+                    match section {
+                        Section::Mode => {
+                            mode = Some(buff.as_str().try_into()?);
+                            buff.clear();
+                        }
+                        Section::Colors => {
+                            if let Some(m) = &mode {
+                                match m {
+                                    Mode::Gradient => match &mut colors {
+                                        Some(c) => {
+                                            if let ColorOrMapVec::Color(v) = c {
+                                                v.push(Color::try_from_hex_str(&buff)?);
+                                                buff.clear();
+                                            } else {
+                                                return Err(TranError::ConfigError(
+                                                    "Inconsistent state".to_string(),
+                                                ));
+                                            }
+                                        }
+                                        None => {
+                                            colors = Some(ColorOrMapVec::Color(vec![
+                                                Color::try_from_hex_str(&buff)?,
+                                            ]));
+                                            buff.clear();
+                                        }
+                                    },
+                                    Mode::Map => {
+                                        let color_map = buff
+                                            .split('#')
+                                            .map(|s| Color::try_from_hex_str(s))
+                                            .collect::<Result<Vec<Color>, TranError>>()?;
+                                        match &mut colors {
+                                            Some(c) => {
+                                                if let ColorOrMapVec::Map(v) = c {
+                                                    v.push(color_map);
+                                                } else {
+                                                    return Err(TranError::ConfigError(
+                                                        "Inconsistent state".to_string(),
+                                                    ));
+                                                }
+                                            }
+                                            None => {
+                                                colors = Some(ColorOrMapVec::Map(vec![color_map]));
+                                            }
+                                        }
+                                        buff.clear();
+                                    }
+                                }
+                            } else {
+                                return Err(TranError::ConfigError("Found color section before mode section. Can't determine color format".to_string()));
+                            }
+                        }
+                        Section::CurrentColor => {
+                            if let Some(m) = &mode {
+                                match m {
+                                    Mode::Gradient => {
+                                        current_color =
+                                            ColorOrMap::Color(Color::try_from_hex_str(&buff)?);
+                                        buff.clear();
+                                    }
+                                    Mode::Map => {
+                                        let c = buff.split('#');
+                                        current_color = ColorOrMap::Map(
+                                            c.map(|s| Color::try_from_hex_str(s))
+                                                .collect::<Result<Vec<Color>, TranError>>()?,
+                                        );
+                                    }
+                                }
+                            } else {
+                                return Err(TranError::ConfigError("Found color section before mode section. Can't determine color format".to_string()));
+                            }
+                        }
+                        Section::TargetFiles => {
+                            target_files.push(buff);
+                            buff = String::with_capacity(BUFF_SIZE);
+                        }
+                    }
+                    state = ParseState::NewLine;
+                } else {
+                    buff.push(char);
+                }
+            }
+            ParseState::NewLine => {
+                if char == '[' {
+                    state = ParseState::BraceOpen;
+                } else {
+                    buff.push(char);
+                    state = ParseState::Text;
+                }
+            }
+        }
+    }
+
+    match (
+        mode.ok_or(TranError::ConfigError("Missing mode".to_string()))?,
+        current_color,
+        colors.ok_or(TranError::ConfigError("Missing colors".to_string()))?,
+    ) {
+        (Mode::Gradient, ColorOrMap::Color(current_color), ColorOrMapVec::Color(colors)) => {
+            Ok(Config::GradientConfig(GradientConfig {
+                current_color,
+                target_files,
+                colors,
+            }))
+        }
+        (Mode::Map, ColorOrMap::Map(current_color), ColorOrMapVec::Map(colors)) => {
+            Ok(Config::MapConfig(MapConfig {
+                current_color,
+                target_files,
+                colors,
+            }))
+        }
+        (_, _, _) => Err(TranError::ConfigError("Inconsistent state".to_string())),
+    }
+}
+
+pub fn write_config<T: AsRef<Path>>(config: Config, target: T) -> Result<(), TranError> {
+    let f = std::fs::File::create(target)?;
+    let mut writer = std::io::BufWriter::new(f);
+
+    match config {
+        Config::GradientConfig(config) => {
+            write!(&mut writer, "[mode]\n")?;
+            write!(&mut writer, "{}\n", "gradient")?;
+
+            write!(&mut writer, "[current_color]\n")?;
+            write!(&mut writer, "{}\n", config.get_current_color())?;
+
+            write!(&mut writer, "[colors]\n")?;
+            for color in config.get_colors() {
+                write!(&mut writer, "{}\n", color)?;
+            }
+
+            write!(&mut writer, "[target_files]\n")?;
+            for target in config.get_target_files() {
+                write!(&mut writer, "{}\n", target)?;
+            }
+        }
+        Config::MapConfig(config) => {
+            write!(&mut writer, "[mode]\n")?;
+            write!(&mut writer, "{}\n", "gradient")?;
+
+            write!(&mut writer, "[current_color]\n")?;
+            for color in config.get_current_colors() {
+                write!(&mut writer, "{}", color)?;
+            }
+            write!(&mut writer, "\n")?;
+
+            write!(&mut writer, "[colors]\n")?;
+            for color_row in config.get_colors() {
+                for color in color_row {
+                    write!(&mut writer, "{}", color)?;
+                }
+                write!(&mut writer, "\n")?;
+            }
+
+            write!(&mut writer, "[target_files]\n")?;
+            for target in config.get_target_files() {
+                write!(&mut writer, "{}\n", target)?;
+            }
+        }
+    }
+
+    writer.flush()?;
+
+    Ok(())
 }

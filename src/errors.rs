@@ -49,14 +49,9 @@ impl From<std::io::Error> for TranError {
     }
 }
 
-impl From<toml::ser::Error> for TranError {
-    fn from(value: toml::ser::Error) -> Self {
-        TranError::WritingConfigError(value.to_string())
-    }
-}
 
-impl From<toml::de::Error> for TranError {
-    fn from(value: toml::de::Error) -> Self {
+impl From<std::num::ParseIntError> for TranError {
+    fn from(value: std::num::ParseIntError) -> Self {
         TranError::ConfigError(value.to_string())
     }
 }

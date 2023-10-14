@@ -1,6 +1,4 @@
-- [ ] Cli args
-- [ ] Read from stdin
-- [ ] Write to stdout
-- [ ] Generate gradient
-- [ ] More config file
+- [ ] Cli args // No
+- [X] Generate gradient
+- [X] More config file
 - [X] Reorganize

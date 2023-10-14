@@ -1,65 +1,132 @@
 use std::{fs, path::Path};
 
-use rand::prelude::*;
-
 use tran::{
-    config::{Config, IncompleteConfig},
+    config::{parse_config, write_config, Config},
     errors::TranError,
     png::recolor_png,
-    recolor_textfile, ColorTransform,
+    recolor_textfile, ColorMap, ColorTransform,
 };
 
+
+fn get_config_path() -> Result<String, TranError> {
+    let mut config_home = if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
+        config_home
+    } else if let Ok(home) = std::env::var("HOME") {
+        format!("{}/.config", home)
+    } else {
+        return Err(TranError::ConfigError(
+            "Could not determine config directory".to_string(),
+        ));
+    };
+
+    config_home.push_str("/tran/config");
+    Ok(config_home)
+}
+
 fn main() -> Result<(), TranError> {
-    let mut config_path = dirs::config_dir().ok_or(TranError::ConfigError(
-        "Could not find config dir".to_string(),
-    ))?;
-    config_path.push("tran");
-
-    if !config_path.is_dir() {
-        fs::create_dir(&config_path)?;
-    }
-
-    config_path.push("config.toml");
+    let config_path = get_config_path()?;
+    let config_path = std::path::Path::new(&config_path);
 
     if !config_path.is_file() {
-        fs::write(&config_path, toml::to_string(&IncompleteConfig::default())?)?;
+        fs::write(&config_path, "")?;
         eprintln!("Created empty config file, please fill it out");
         return Ok(());
     }
 
-    let config_raw = fs::read_to_string(&config_path)?;
-    let incomplete_config: IncompleteConfig = toml::from_str(&config_raw)?;
-    let mut config: Config = incomplete_config.try_into()?;
+    let mut config = parse_config(&config_path)?;
 
-    let mut rng = rand::thread_rng();
-    let new_color = config
-        .colors
-        .get(rng.gen_range(0..config.colors.len()))
-        .unwrap();
+    let t = std::time::SystemTime::now();
+    match &mut config {
+        Config::GradientConfig(gc) => {
+            let colors = gc.get_colors();
+            let new_color = (*colors
+                .get(
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .expect("System time is before start of unix epoch")
+                        .as_secs() as usize
+                        % colors.len(),
+                )
+                .unwrap()).clone();
 
-    for target_file in &config.target_files {
-        let path = Path::new(&target_file);
-        if !path.is_file() {
-            eprintln!("File {} could not be found", target_file);
-            continue;
-        }
+            let color_string = new_color.to_string();
+            let old_color_string = gc.get_current_color().to_string();
+            let trans = ColorTransform::Gradient {
+                primary: &color_string,
+                background: "#000000",
+            };
+            for target_file in gc.get_target_files() {
+                let path = Path::new(&target_file);
+                if !path.is_file() {
+                    eprintln!("File {} could not be found", target_file);
+                    continue;
+                }
 
-        if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
-            if ext == "png" {
-                let trans = ColorTransform::new(new_color, &config.current_color);
-                let transform = vec![&trans];
-                recolor_png(path, transform.as_slice())?;
-                continue;
+                if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+                    if ext == "png" {
+                        recolor_png(path, &trans)?;
+                        continue;
+                    }
+                }
+
+                if let Err(e) = recolor_textfile(path, &color_string, &old_color_string) {
+                    eprintln!("Error recoloring {}: {}", target_file, e);
+                }
             }
+            gc.set_current_colors(new_color);
         }
+        Config::MapConfig(mc) => {
+            let colors = mc.get_colors();
+            let new_color = colors
+                .get(
+                    t.duration_since(std::time::UNIX_EPOCH)
+                        .expect("System time is before start of unix epoch")
+                        .as_secs() as usize
+                        % colors.len(),
+                )
+                .unwrap().to_owned();
 
-        if let Err(e) = recolor_textfile(path, new_color, &config.current_color) {
-            eprintln!("Error recoloring {}: {}", target_file, e);
+            let current_color = mc.get_current_colors();
+
+            let store: Vec<(String, String)> = new_color
+                .iter()
+                .zip(current_color)
+                .map(|(new, current)| (new.to_string(), current.to_string()))
+                .collect();
+
+            let map: Vec<ColorMap> = store
+                .iter()
+                .map(|(new, current)| ColorMap::new(&new, &current))
+                .collect();
+            let trans = ColorTransform::Map(&map);
+
+            for target_file in mc.get_target_files() {
+                let path = Path::new(&target_file);
+                if !path.is_file() {
+                    eprintln!("File {} could not be found", target_file);
+                    continue;
+                }
+
+                if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+                    if ext == "png" {
+                        recolor_png(path, &trans)?;
+                        continue;
+                    }
+                }
+
+                for c in &map {
+                    if let Err(e) =
+                        recolor_textfile(path, &c.get_new_color(), &c.get_current_color())
+                    {
+                        eprintln!("Error recoloring {}: {}", target_file, e);
+                    }
+                }
+            }
+
+            mc.set_current_colors(new_color);
         }
-    }
+    };
 
-    config.current_color = new_color.to_owned();
-    fs::write(config_path, toml::to_string(&config)?)?;
+    write_config(config, config_path)?;
 
     Ok(())
 }

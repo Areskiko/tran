@@ -1,7 +1,6 @@
 use std::path::Path;
 
-use crate::{errors::TranError, ColorTransform};
-
+use crate::{errors::TranError, hex_to_bytes, ColorMap, ColorTransform};
 
 const PNG_FORMAT_IDENTIFIER: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const IHDR_COLOR_TYPE_OFFSET: usize = 9;
@@ -9,7 +8,6 @@ const IHDR: u32 = 0x49484452;
 const IEND: u32 = 0x49454E44;
 const PLTE: u32 = 0x504C5445;
 const IDAT: u32 = 0x49444154;
-
 
 #[derive(Debug)]
 enum PngColorType {
@@ -111,7 +109,12 @@ fn read_chunk<'a>(png: &'a mut std::slice::IterMut<u8>) -> Result<Chunk<'a>, Tra
     })
 }
 
-pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> Result<(), TranError> {
+struct GeneratedColorMap {
+    old_colors: (u8, u8, u8),
+    new_colors: (u8, u8, u8),
+}
+
+pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Result<(), TranError> {
     if !target.as_ref().is_file() {
         return Err(TranError::FileNotFoundError(
             target.as_ref().to_string_lossy().to_string(),
@@ -172,17 +175,27 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> 
             PngColorType::Palette => {
                 if chunk.chunk_type == PLTE {
                     let mut pixels = chunk.chunk_data.iter_mut();
+                    let mut colors = Vec::with_capacity((chunk.length / 3) as usize);
                     for _ in 0..chunk.length / 3 {
                         let red = pixels.next().ok_or(TranError::FileReadError(
-                            "Could not read next pixel".to_string(),
+                            "Could not read red pixel".to_string(),
                         ))?;
                         let green = pixels.next().ok_or(TranError::FileReadError(
-                            "Could not read next pixel".to_string(),
+                            "Could not read green pixel".to_string(),
                         ))?;
                         let blue = pixels.next().ok_or(TranError::FileReadError(
-                            "Could not read next pixel".to_string(),
+                            "Could not read blue pixel".to_string(),
                         ))?;
 
+                        if (**red == 0 && **green == 0 && **blue == 0)
+                            || (**red == 255 && **green == 255 && **blue == 255)
+                        {
+                            continue;
+                        }
+
+                        colors.push((red, green, blue));
+
+                        /*
                         if let Some(mapping) = transform.iter().find(|color_transform| {
                             color_transform.current_color_bytes().unwrap().0 == **red
                                 && color_transform.current_color_bytes().unwrap().1 == **green
@@ -193,7 +206,84 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> 
                             **green = mapping.new_color_bytes()?.1;
                             **blue = mapping.new_color_bytes()?.2;
                         }
+                        */
                     }
+
+                    match transform {
+                        ColorTransform::Map(map) => {
+                            for trans in map.iter() {
+                                for color in colors.iter_mut() {
+                                    if **color.0 == trans.current_color_bytes()?.0
+                                        && **color.1 == trans.current_color_bytes()?.1
+                                        && **color.2 == trans.current_color_bytes()?.2
+                                    {
+                                        **color.0 = trans.new_color_bytes()?.0;
+                                        **color.1 = trans.new_color_bytes()?.1;
+                                        **color.2 = trans.new_color_bytes()?.2;
+                                    }
+                                }
+                            }
+                        }
+                        ColorTransform::Gradient {
+                            primary,
+                            background,
+                        } => {
+                            colors.sort_unstable_by(|a, b| {
+                                (**b.0 as u64 + **b.1 as u64 + **b.2 as u64)
+                                    .cmp(&(**a.0 as u64 + **a.1 as u64 + **a.2 as u64))
+                            });
+                            println!("{:?}", colors);
+                            let mut map: Vec<GeneratedColorMap> = Vec::with_capacity(colors.len());
+                            let first_color = colors
+                                .get(0)
+                                .ok_or(TranError::PngFormatError("No colors".to_string()))?;
+                            map.push(GeneratedColorMap {
+                                new_colors: hex_to_bytes(primary)?,
+                                old_colors: (**first_color.0, **first_color.1, **first_color.2),
+                            });
+
+                            for i in 1..colors.len() {
+                                let previous_new = map
+                                    .get(i - 1)
+                                    .ok_or(TranError::PngFormatError("No colors".to_string()))?
+                                    .new_colors;
+                                let previous_old = colors
+                                    .get(i - 1)
+                                    .ok_or(TranError::PngFormatError("No colors".to_string()))?;
+                                let next_old = colors
+                                    .get(i)
+                                    .ok_or(TranError::PngFormatError("No colors".to_string()))?;
+
+                                let red_diff = (**next_old.0 as f64) / (**previous_old.0 as f64);
+                                let grenn_diff = (**next_old.1 as f64) / (**previous_old.1 as f64);
+                                let blue_diff = (**next_old.2 as f64) / (**previous_old.2 as f64);
+
+                                let next_new = (
+                                    ((previous_new.0 as f64) * red_diff) as u8,
+                                    ((previous_new.1 as f64) * grenn_diff) as u8,
+                                    ((previous_new.2 as f64) * blue_diff) as u8,
+                                );
+                                map.push(GeneratedColorMap {
+                                    new_colors: next_new,
+                                    old_colors: (**next_old.0, **next_old.1, **next_old.2),
+                                });
+                            }
+
+                            for trans in map.iter() {
+                                for color in colors.iter_mut() {
+                                    if **color.0 == trans.old_colors.0
+                                        && **color.1 == trans.old_colors.1
+                                        && **color.2 == trans.old_colors.2
+                                    {
+                                        **color.0 = trans.new_colors.0;
+                                        **color.1 = trans.new_colors.1;
+                                        **color.2 = trans.new_colors.2;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Recalculate CRC
                     let mut crc_data: Vec<&mut u8> = Vec::with_capacity(4 + chunk.chunk_data.len());
                     let mut chunk_type = (
@@ -233,7 +323,6 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &[&ColorTransform]) -> 
 
     Ok(())
 }
-
 
 fn crc(buf: &[&mut u8]) -> u32 {
     let mut crc_table: [u32; 256] = [0; 256];
