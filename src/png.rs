@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{errors::TranError, hex_to_bytes, ColorMap, ColorTransform};
+use crate::{errors::TranError, hex_to_bytes, ColorTransform};
 
 const PNG_FORMAT_IDENTIFIER: [u8; 8] = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const IHDR_COLOR_TYPE_OFFSET: usize = 9;
@@ -226,7 +226,7 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
                         }
                         ColorTransform::Gradient {
                             primary,
-                            background,
+                            background: _,
                         } => {
                             colors.sort_unstable_by(|a, b| {
                                 (**b.0 as u64 + **b.1 as u64 + **b.2 as u64)

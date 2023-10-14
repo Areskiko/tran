@@ -53,11 +53,11 @@ impl<'a> ColorMap<'a> {
     }
 
     pub fn get_new_color(&self) -> &str {
-        &self.new_color
+        self.new_color
     }
 
     pub fn get_current_color(&self) -> &str {
-        &self.current_color
+        self.current_color
     }
 }
 

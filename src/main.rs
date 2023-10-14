@@ -28,25 +28,25 @@ fn main() -> Result<(), TranError> {
     let config_path = std::path::Path::new(&config_path);
 
     if !config_path.is_file() {
-        fs::write(&config_path, "")?;
+        fs::write(config_path, "")?;
         eprintln!("Created empty config file, please fill it out");
         return Ok(());
     }
 
-    let mut config = parse_config(&config_path)?;
+    let mut config = parse_config(config_path)?;
 
     let t = std::time::SystemTime::now();
     match &mut config {
         Config::GradientConfig(gc) => {
             let colors = gc.get_colors();
-            let new_color = (*colors
+            let new_color = *colors
                 .get(
                     t.duration_since(std::time::UNIX_EPOCH)
                         .expect("System time is before start of unix epoch")
                         .as_secs() as usize
                         % colors.len(),
                 )
-                .unwrap()).clone();
+                .unwrap();
 
             let color_string = new_color.to_string();
             let old_color_string = gc.get_current_color().to_string();
@@ -95,7 +95,7 @@ fn main() -> Result<(), TranError> {
 
             let map: Vec<ColorMap> = store
                 .iter()
-                .map(|(new, current)| ColorMap::new(&new, &current))
+                .map(|(new, current)| ColorMap::new(new, current))
                 .collect();
             let trans = ColorTransform::Map(&map);
 
@@ -115,7 +115,7 @@ fn main() -> Result<(), TranError> {
 
                 for c in &map {
                     if let Err(e) =
-                        recolor_textfile(path, &c.get_new_color(), &c.get_current_color())
+                        recolor_textfile(path, c.get_new_color(), c.get_current_color())
                     {
                         eprintln!("Error recoloring {}: {}", target_file, e);
                     }

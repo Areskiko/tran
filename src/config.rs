@@ -2,8 +2,6 @@ use std::{io::Write, path::Path};
 
 use crate::errors::TranError;
 
-const CYAN: &str = "#6EE2FF";
-
 #[derive(PartialEq)]
 enum ParseState {
     Start,
@@ -124,15 +122,11 @@ impl Color {
             )))
         }
     }
-
-    pub fn to_string(&self) -> String {
-        format!("#{:02x}{:02x}{:02x}", self.red, self.green, self.blue)
-    }
 }
 
 impl std::fmt::Display for Color {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "#{:02x}{:02x}{:02x}", self.red, self.green, self.blue)
     }
 }
 
@@ -222,8 +216,8 @@ impl MapConfig {
 const BUFF_SIZE: usize = 50;
 
 pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
-    let mut contents = std::fs::read_to_string(target)?;
-    let mut chars = contents.trim().chars();
+    let contents = std::fs::read_to_string(target)?;
+    let chars = contents.trim().chars();
     let mut state = ParseState::Start;
     let mut section = Section::Mode;
     let mut buff = String::with_capacity(BUFF_SIZE);
@@ -233,7 +227,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
     let mut colors: Option<ColorOrMapVec> = None;
     let mut target_files: Vec<String> = Vec::new();
 
-    for char in chars.into_iter() {
+    for char in chars {
         match state {
             ParseState::Start => {
                 if char != '[' {
@@ -295,7 +289,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                     Mode::Map => {
                                         let color_map = buff
                                             .split('#')
-                                            .map(|s| Color::try_from_hex_str(s))
+                                            .map(Color::try_from_hex_str)
                                             .collect::<Result<Vec<Color>, TranError>>()?;
                                         match &mut colors {
                                             Some(c) => {
@@ -329,7 +323,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                     Mode::Map => {
                                         let c = buff.split('#');
                                         current_color = ColorOrMap::Map(
-                                            c.map(|s| Color::try_from_hex_str(s))
+                                            c.map(Color::try_from_hex_str)
                                                 .collect::<Result<Vec<Color>, TranError>>()?,
                                         );
                                     }
@@ -388,43 +382,43 @@ pub fn write_config<T: AsRef<Path>>(config: Config, target: T) -> Result<(), Tra
 
     match config {
         Config::GradientConfig(config) => {
-            write!(&mut writer, "[mode]\n")?;
-            write!(&mut writer, "{}\n", "gradient")?;
+            writeln!(&mut writer, "[mode]")?;
+            writeln!(&mut writer, "gradient")?;
 
-            write!(&mut writer, "[current_color]\n")?;
-            write!(&mut writer, "{}\n", config.get_current_color())?;
+            writeln!(&mut writer, "[current_color]")?;
+            writeln!(&mut writer, "{}", config.get_current_color())?;
 
-            write!(&mut writer, "[colors]\n")?;
+            writeln!(&mut writer, "[colors]")?;
             for color in config.get_colors() {
-                write!(&mut writer, "{}\n", color)?;
+                writeln!(&mut writer, "{}", color)?;
             }
 
-            write!(&mut writer, "[target_files]\n")?;
+            writeln!(&mut writer, "[target_files]")?;
             for target in config.get_target_files() {
-                write!(&mut writer, "{}\n", target)?;
+                writeln!(&mut writer, "{}", target)?;
             }
         }
         Config::MapConfig(config) => {
-            write!(&mut writer, "[mode]\n")?;
-            write!(&mut writer, "{}\n", "gradient")?;
+            writeln!(&mut writer, "[mode]")?;
+            writeln!(&mut writer, "gradient")?;
 
-            write!(&mut writer, "[current_color]\n")?;
+            writeln!(&mut writer, "[current_color]")?;
             for color in config.get_current_colors() {
                 write!(&mut writer, "{}", color)?;
             }
-            write!(&mut writer, "\n")?;
+            writeln!(&mut writer)?;
 
-            write!(&mut writer, "[colors]\n")?;
+            writeln!(&mut writer, "[colors]")?;
             for color_row in config.get_colors() {
                 for color in color_row {
                     write!(&mut writer, "{}", color)?;
                 }
-                write!(&mut writer, "\n")?;
+                writeln!(&mut writer)?;
             }
 
-            write!(&mut writer, "[target_files]\n")?;
+            writeln!(&mut writer, "[target_files]")?;
             for target in config.get_target_files() {
-                write!(&mut writer, "{}\n", target)?;
+                writeln!(&mut writer, "{}", target)?;
             }
         }
     }
