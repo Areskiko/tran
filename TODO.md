@@ -1,4 +1,0 @@
-- [ ] Cli args // No
-- [X] Generate gradient
-- [X] More config file
-- [X] Reorganize
