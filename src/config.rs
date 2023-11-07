@@ -17,6 +17,7 @@ pub enum Section {
     CurrentColor,
     Colors,
     TargetFiles,
+    Overwrite,
 }
 
 impl TryFrom<&str> for Section {
@@ -28,6 +29,7 @@ impl TryFrom<&str> for Section {
             "colors" => Ok(Self::Colors),
             "target_files" => Ok(Self::TargetFiles),
             "current_color" => Ok(Self::CurrentColor),
+            "overwrite" => Ok(Self::Overwrite),
             _ => Err(TranError::ConfigError(format!("Unrecognized section'{}', valid sections are 'mode', 'current_color', 'colors', and 'target_files'", value)))
         }
     }
@@ -171,6 +173,7 @@ pub struct GradientConfig {
     current_color: Color,
     colors: Vec<Color>,
     target_files: Vec<String>,
+    overwrite: bool,
 }
 
 impl GradientConfig {
@@ -189,6 +192,10 @@ impl GradientConfig {
     pub fn get_target_files(&self) -> &[String] {
         &self.target_files
     }
+
+    pub fn get_overwrite(&self) -> bool {
+        self.overwrite
+    }
 }
 
 #[derive(Debug)]
@@ -196,6 +203,7 @@ pub struct MapConfig {
     current_color: Vec<Color>,
     colors: Vec<Vec<Color>>,
     target_files: Vec<String>,
+    overwrite: bool,
 }
 
 impl MapConfig {
@@ -214,6 +222,10 @@ impl MapConfig {
     pub fn get_target_files(&self) -> &[String] {
         &self.target_files
     }
+
+    pub fn get_overwrite(&self) -> bool {
+        self.overwrite
+    }
 }
 
 const BUFF_SIZE: usize = 50;
@@ -229,6 +241,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
     let mut current_color: ColorOrMap = ColorOrMap::Color(Color::black());
     let mut colors: Option<ColorOrMapVec> = None;
     let mut target_files: Vec<String> = Vec::new();
+    let mut overwrite: bool = false;
 
     for char in chars {
         match state {
@@ -342,6 +355,12 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                             target_files.push(buff);
                             buff = String::with_capacity(BUFF_SIZE);
                         }
+                        Section::Overwrite => {
+                            if buff == "true" {
+                                overwrite = true;
+                            }
+                            buff.clear()
+                        }
                     }
                     state = ParseState::NewLine;
                 } else {
@@ -442,6 +461,11 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
             Section::TargetFiles => {
                 target_files.push(buff);
             }
+            Section::Overwrite => {
+                if buff == "true" {
+                    overwrite = true;
+                }
+            }
         }
     }
 
@@ -455,6 +479,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                 current_color,
                 target_files,
                 colors,
+                overwrite,
             }))
         }
         (Mode::Map, ColorOrMap::Map(current_color), ColorOrMapVec::Map(colors)) => {
@@ -462,6 +487,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                 current_color,
                 target_files,
                 colors,
+                overwrite,
             }))
         }
         (_, _, _) => Err(TranError::ConfigError("Inconsistent state".to_string())),
@@ -476,6 +502,9 @@ pub fn write_config<T: AsRef<Path>>(config: Config, target: T) -> Result<(), Tra
         Config::GradientConfig(config) => {
             writeln!(&mut writer, "[mode]")?;
             writeln!(&mut writer, "gradient")?;
+
+            writeln!(&mut writer, "[overwrite]")?;
+            writeln!(&mut writer, "{}", config.get_overwrite())?;
 
             writeln!(&mut writer, "[current_color]")?;
             writeln!(&mut writer, "{}", config.get_current_color())?;
@@ -493,6 +522,9 @@ pub fn write_config<T: AsRef<Path>>(config: Config, target: T) -> Result<(), Tra
         Config::MapConfig(config) => {
             writeln!(&mut writer, "[mode]")?;
             writeln!(&mut writer, "gradient")?;
+
+            writeln!(&mut writer, "[overwrite]")?;
+            writeln!(&mut writer, "{}", config.get_overwrite())?;
 
             writeln!(&mut writer, "[current_color]")?;
             for color in config.get_current_colors() {

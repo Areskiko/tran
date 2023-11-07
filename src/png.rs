@@ -63,9 +63,9 @@ fn read_chunk<'a>(png: &'a mut std::slice::IterMut<u8>) -> Result<Chunk<'a>, Tra
     .enumerate()
     .map(|(index, byte)| (byte as u32) << (8 * (3 - index)))
     .reduce(|acc, byte| acc | byte)
-    .ok_or_else(||TranError::FileReadError(
-        "Something went wrong while reducing length".to_string(),
-    ))?;
+    .ok_or_else(|| {
+        TranError::FileReadError("Something went wrong while reducing length".to_string())
+    })?;
 
     let chunk_type = [
         png.next().cloned(),
@@ -78,27 +78,27 @@ fn read_chunk<'a>(png: &'a mut std::slice::IterMut<u8>) -> Result<Chunk<'a>, Tra
     .enumerate()
     .map(|(index, byte)| (byte as u32) << (8 * (3 - index)))
     .reduce(|acc, byte| acc | byte)
-    .ok_or_else(||TranError::FileReadError(
-        "Something went wrong while reducing chunk type".to_string(),
-    ))?;
+    .ok_or_else(|| {
+        TranError::FileReadError("Something went wrong while reducing chunk type".to_string())
+    })?;
 
     let mut chunk_data: Vec<&mut u8> = Vec::with_capacity(length as usize);
     for _ in 0..length {
         chunk_data.push(
             png.next()
-                .ok_or_else(||TranError::FileReadError("Ran out of bytes".to_string()))?,
+                .ok_or_else(|| TranError::FileReadError("Ran out of bytes".to_string()))?,
         );
     }
 
     let crc = [
         png.next()
-            .ok_or_else(||TranError::FileReadError("Ran out of bytes".to_string()))?,
+            .ok_or_else(|| TranError::FileReadError("Ran out of bytes".to_string()))?,
         png.next()
-            .ok_or_else(||TranError::FileReadError("Ran out of bytes".to_string()))?,
+            .ok_or_else(|| TranError::FileReadError("Ran out of bytes".to_string()))?,
         png.next()
-            .ok_or_else(||TranError::FileReadError("Ran out of bytes".to_string()))?,
+            .ok_or_else(|| TranError::FileReadError("Ran out of bytes".to_string()))?,
         png.next()
-            .ok_or_else(||TranError::FileReadError("Ran out of bytes".to_string()))?,
+            .ok_or_else(|| TranError::FileReadError("Ran out of bytes".to_string()))?,
     ];
 
     Ok(Chunk {
@@ -114,14 +114,14 @@ struct GeneratedColorMap {
     new_colors: (u8, u8, u8),
 }
 
-pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Result<(), TranError> {
-    if !target.as_ref().is_file() {
+pub fn recolor_png<S: AsRef<Path>, T: AsRef<Path>>(source: S, target: T, transform: &ColorTransform) -> Result<(), TranError> {
+    if !source.as_ref().is_file() {
         return Err(TranError::FileNotFoundError(
-            target.as_ref().to_string_lossy().to_string(),
+            source.as_ref().to_string_lossy().to_string(),
         ));
     }
 
-    let mut file = std::fs::read(&target)?;
+    let mut file = std::fs::read(&source)?;
     let mut png = file.iter_mut();
 
     for png_format_identifier_byte in PNG_FORMAT_IDENTIFIER {
@@ -129,7 +129,7 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
             if *read_byte != png_format_identifier_byte {
                 return Err(TranError::FileReadError(format!(
                     "{} is not a png as {:x} != {:x}",
-                    target.as_ref().to_string_lossy(),
+                    source.as_ref().to_string_lossy(),
                     *read_byte,
                     png_format_identifier_byte
                 )));
@@ -137,7 +137,7 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
         } else {
             return Err(TranError::FileReadError(format!(
                 "{} is not a png as png next failed",
-                target.as_ref().to_string_lossy()
+                source.as_ref().to_string_lossy()
             )));
         }
     }
@@ -146,7 +146,7 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
     if ihdr.chunk_type != IHDR {
         return Err(TranError::FileReadError(format!(
             "{} is not a png as it does not contain IHDR chunk {:x} != {:x}",
-            target.as_ref().to_string_lossy(),
+            source.as_ref().to_string_lossy(),
             ihdr.chunk_type,
             IHDR
         )));
@@ -155,7 +155,7 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
     let color_type: PngColorType = (**ihdr
         .chunk_data
         .get(IHDR_COLOR_TYPE_OFFSET)
-        .ok_or_else(||TranError::FileReadError("No color type".to_string()))?)
+        .ok_or_else(|| TranError::FileReadError("No color type".to_string()))?)
     .try_into()?;
 
     if let PngColorType::Grayscale | PngColorType::GrayscaleAlpha = color_type {
@@ -168,24 +168,23 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
         ));
     }
 
-    loop {
-        let mut chunk = read_chunk(&mut png)?;
-
-        match color_type {
-            PngColorType::Palette => {
+    match color_type {
+        PngColorType::Palette => {
+            loop {
+                let mut chunk = read_chunk(&mut png)?;
                 if chunk.chunk_type == PLTE {
                     let mut pixels = chunk.chunk_data.iter_mut();
                     let mut colors = Vec::with_capacity((chunk.length / 3) as usize);
                     for _ in 0..chunk.length / 3 {
-                        let red = pixels.next().ok_or_else(||TranError::FileReadError(
-                            "Could not read red pixel".to_string(),
-                        ))?;
-                        let green = pixels.next().ok_or_else(||TranError::FileReadError(
-                            "Could not read green pixel".to_string(),
-                        ))?;
-                        let blue = pixels.next().ok_or_else(||TranError::FileReadError(
-                            "Could not read blue pixel".to_string(),
-                        ))?;
+                        let red = pixels.next().ok_or_else(|| {
+                            TranError::FileReadError("Could not read red pixel".to_string())
+                        })?;
+                        let green = pixels.next().ok_or_else(|| {
+                            TranError::FileReadError("Could not read green pixel".to_string())
+                        })?;
+                        let blue = pixels.next().ok_or_else(|| {
+                            TranError::FileReadError("Could not read blue pixel".to_string())
+                        })?;
 
                         if (**red == 0 && **green == 0 && **blue == 0)
                             || (**red == 255 && **green == 255 && **blue == 255)
@@ -194,19 +193,6 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
                         }
 
                         colors.push((red, green, blue));
-
-                        /*
-                        if let Some(mapping) = transform.iter().find(|color_transform| {
-                            color_transform.current_color_bytes().unwrap().0 == **red
-                                && color_transform.current_color_bytes().unwrap().1 == **green
-                                && color_transform.current_color_bytes().unwrap().2 == **blue
-                        }) {
-                            let (_new_red, _new_green, _new_blue) = mapping.new_color_bytes()?;
-                            **red = mapping.new_color_bytes()?.0;
-                            **green = mapping.new_color_bytes()?.1;
-                            **blue = mapping.new_color_bytes()?.2;
-                        }
-                        */
                     }
 
                     match transform {
@@ -233,9 +219,9 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
                                     .cmp(&(**a.0 as u64 + **a.1 as u64 + **a.2 as u64))
                             });
                             let mut map: Vec<GeneratedColorMap> = Vec::with_capacity(colors.len());
-                            let first_color = colors
-                                .get(0)
-                                .ok_or_else(||TranError::PngFormatError("No colors".to_string()))?;
+                            let first_color = colors.get(0).ok_or_else(|| {
+                                TranError::PngFormatError("No colors".to_string())
+                            })?;
                             map.push(GeneratedColorMap {
                                 new_colors: hex_to_bytes(primary)?,
                                 old_colors: (**first_color.0, **first_color.1, **first_color.2),
@@ -244,14 +230,16 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
                             for i in 1..colors.len() {
                                 let previous_new = map
                                     .get(i - 1)
-                                    .ok_or_else(||TranError::PngFormatError("No colors".to_string()))?
+                                    .ok_or_else(|| {
+                                        TranError::PngFormatError("No colors".to_string())
+                                    })?
                                     .new_colors;
-                                let previous_old = colors
-                                    .get(i - 1)
-                                    .ok_or_else(||TranError::PngFormatError("No colors".to_string()))?;
-                                let next_old = colors
-                                    .get(i)
-                                    .ok_or_else(||TranError::PngFormatError("No colors".to_string()))?;
+                                let previous_old = colors.get(i - 1).ok_or_else(|| {
+                                    TranError::PngFormatError("No colors".to_string())
+                                })?;
+                                let next_old = colors.get(i).ok_or_else(|| {
+                                    TranError::PngFormatError("No colors".to_string())
+                                })?;
 
                                 let red_diff = (**next_old.0 as f64) / (**previous_old.0 as f64);
                                 let grenn_diff = (**next_old.1 as f64) / (**previous_old.1 as f64);
@@ -304,18 +292,15 @@ pub fn recolor_png<T: AsRef<Path>>(target: T, transform: &ColorTransform) -> Res
                     *chunk.crc[2] = ((new_crc & (0x0000FF00)) >> 8) as u8;
                     *chunk.crc[3] = (new_crc & (0x000000FF)) as u8;
                 }
-            }
-            PngColorType::Rgb | PngColorType::Rgba => {
-                if chunk.chunk_type == IDAT {
-                    todo!()
+                if chunk.chunk_type == IEND {
+                    break;
                 }
             }
-            _ => unreachable!(),
         }
-
-        if chunk.chunk_type == IEND {
-            break;
+        PngColorType::Rgb | PngColorType::Rgba => {
+            todo!()
         }
+        _ => unreachable!(),
     }
 
     std::fs::write(&target, file)?;

@@ -7,7 +7,6 @@ use tran::{
     recolor_textfile, ColorMap, ColorTransform,
 };
 
-
 fn get_config_path() -> Result<String, TranError> {
     let mut config_home = if let Ok(config_home) = std::env::var("XDG_CONFIG_HOME") {
         config_home
@@ -63,7 +62,21 @@ fn main() -> Result<(), TranError> {
 
                 if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
                     if ext == "png" {
-                        recolor_png(path, &trans)?;
+                        match gc.get_overwrite() {
+                            true => recolor_png(path, path, &trans)?,
+                            false => recolor_png(
+                                path,
+                                path.with_file_name(format!(
+                                    "{}_{}",
+                                    path.file_stem()
+                                        .and_then(|p| p.to_str())
+                                        .expect("Non utf-8 file name"),
+                                    &new_color.to_string(),
+                                ))
+                                .with_extension("png"),
+                                &trans,
+                            )?,
+                        }
                         continue;
                     }
                 }
@@ -83,7 +96,8 @@ fn main() -> Result<(), TranError> {
                         .as_secs() as usize
                         % colors.len(),
                 )
-                .unwrap().to_owned();
+                .unwrap()
+                .to_owned();
 
             let current_color = mc.get_current_colors();
 
@@ -108,14 +122,30 @@ fn main() -> Result<(), TranError> {
 
                 if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
                     if ext == "png" {
-                        recolor_png(path, &trans)?;
+                        match mc.get_overwrite() {
+                            true => recolor_png(path, path, &trans)?,
+                            false => recolor_png(
+                                path,
+                                path.with_file_name(format!(
+                                    "{}_{}",
+                                    path.file_stem()
+                                        .and_then(|p| p.to_str())
+                                        .expect("Non utf-8 file name"),
+                                    &new_color
+                                        .get(1)
+                                        .expect("No new color selectable")
+                                        .to_string(),
+                                ))
+                                .with_extension("png"),
+                                &trans,
+                            )?,
+                        }
                         continue;
                     }
                 }
 
                 for c in &map {
-                    if let Err(e) =
-                        recolor_textfile(path, c.get_new_color(), c.get_current_color())
+                    if let Err(e) = recolor_textfile(path, c.get_new_color(), c.get_current_color())
                     {
                         eprintln!("Error recoloring {}: {}", target_file, e);
                     }
