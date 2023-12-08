@@ -333,12 +333,12 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                                     entire
                                                         .next()
                                                         .and_then(|c| {
-                                                            usize::from_str_radix(c, 10).ok()
+                                                            c.parse().ok()
                                                         })
                                                         .unwrap_or(1),
                                                 );
                                                 v.push(Color::try_from_hex_str(
-                                                    &entire.next().ok_or_else(|| {
+                                                    entire.next().ok_or_else(|| {
                                                         TranError::ConfigError(
                                                             "Failed to parse color value"
                                                                 .to_string(),
@@ -358,12 +358,12 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                             weights.push(
                                                 entire
                                                     .next()
-                                                    .and_then(|c| usize::from_str_radix(c, 10).ok())
+                                                    .and_then(|c| c.parse().ok())
                                                     .unwrap_or(1),
                                             );
                                             colors = Some(ColorOrMapVec::Color(vec![
                                                 Color::try_from_hex_str(
-                                                    &entire.next().ok_or_else(|| {
+                                                    entire.next().ok_or_else(|| {
                                                         TranError::ConfigError(
                                                             "Failed to parse color value"
                                                                 .to_string(),
@@ -379,7 +379,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                         weights.push(
                                             entire
                                                 .next()
-                                                .and_then(|c| usize::from_str_radix(c, 10).ok())
+                                                .and_then(|c| c.parse().ok())
                                                 .unwrap_or(1),
                                         );
                                         let color_map = entire
@@ -454,7 +454,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
         }
     }
 
-    if buff.len() != 0 {
+    if !buff.is_empty() {
         match section {
             Section::Mode => {
                 mode = Some(buff.as_str().try_into()?);
