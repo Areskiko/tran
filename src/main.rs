@@ -37,7 +37,7 @@ fn main() -> Result<(), TranError> {
     let t = std::time::SystemTime::now();
     match &mut config {
         Config::GradientConfig(gc) => {
-            let colors = gc.get_colors();
+            let colors = gc.get_colors_scaled();
             let new_color = *colors
                 .get(
                     t.duration_since(std::time::UNIX_EPOCH)
@@ -88,7 +88,7 @@ fn main() -> Result<(), TranError> {
             gc.set_current_colors(new_color);
         }
         Config::MapConfig(mc) => {
-            let colors = mc.get_colors();
+            let colors = mc.get_colors_scaled();
             let new_color = colors
                 .get(
                     t.duration_since(std::time::UNIX_EPOCH)
@@ -152,7 +152,7 @@ fn main() -> Result<(), TranError> {
                 }
             }
 
-            mc.set_current_colors(new_color);
+            mc.set_current_colors(new_color.to_owned());
         }
     };
 

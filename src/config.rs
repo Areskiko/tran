@@ -65,7 +65,7 @@ enum ColorOrMapVec {
     Map(Vec<Vec<Color>>),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color {
     red: u8,
     green: u8,
@@ -172,6 +172,7 @@ impl Config {
 pub struct GradientConfig {
     current_color: Color,
     colors: Vec<Color>,
+    weights: Vec<usize>,
     target_files: Vec<String>,
     overwrite: bool,
 }
@@ -189,6 +190,27 @@ impl GradientConfig {
         &self.colors
     }
 
+    pub fn get_colors_scaled(&self) -> Vec<Color> {
+        let mut output = Vec::new();
+
+        for (i, color) in self.get_colors().iter().enumerate() {
+            if color == self.get_current_color() {
+                continue;
+            }
+
+            let w = match self.weights.get(i) {
+                Some(w) => *w,
+                None => 1,
+            };
+
+            for _ in 0..w {
+                output.push(*color)
+            }
+        }
+
+        output
+    }
+
     pub fn get_target_files(&self) -> &[String] {
         &self.target_files
     }
@@ -202,6 +224,7 @@ impl GradientConfig {
 pub struct MapConfig {
     current_color: Vec<Color>,
     colors: Vec<Vec<Color>>,
+    weights: Vec<usize>,
     target_files: Vec<String>,
     overwrite: bool,
 }
@@ -217,6 +240,22 @@ impl MapConfig {
 
     pub fn get_colors(&self) -> &[Vec<Color>] {
         &self.colors
+    }
+
+    pub fn get_colors_scaled(&self) -> Vec<&Vec<Color>> {
+        let mut output = Vec::new();
+
+        for (i, color) in self.get_colors().iter().enumerate() {
+            let w = match self.weights.get(i) {
+                Some(w) => *w,
+                None => 1,
+            };
+            for _ in 0..w {
+                output.push(color)
+            }
+        }
+
+        output
     }
 
     pub fn get_target_files(&self) -> &[String] {
@@ -242,6 +281,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
     let mut colors: Option<ColorOrMapVec> = None;
     let mut target_files: Vec<String> = Vec::new();
     let mut overwrite: bool = false;
+    let mut weights: Vec<usize> = Vec::new();
 
     for char in chars {
         match state {
@@ -287,7 +327,24 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                     Mode::Gradient => match &mut colors {
                                         Some(c) => {
                                             if let ColorOrMapVec::Color(v) = c {
-                                                v.push(Color::try_from_hex_str(&buff)?);
+                                                let mut entire = buff.split('#');
+
+                                                weights.push(
+                                                    entire
+                                                        .next()
+                                                        .and_then(|c| {
+                                                            usize::from_str_radix(c, 10).ok()
+                                                        })
+                                                        .unwrap_or(1),
+                                                );
+                                                v.push(Color::try_from_hex_str(
+                                                    &entire.next().ok_or_else(|| {
+                                                        TranError::ConfigError(
+                                                            "Failed to parse color value"
+                                                                .to_string(),
+                                                        )
+                                                    })?,
+                                                )?);
                                                 buff.clear();
                                             } else {
                                                 return Err(TranError::ConfigError(
@@ -296,17 +353,39 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                             }
                                         }
                                         None => {
+                                            let mut entire = buff.split('#');
+
+                                            weights.push(
+                                                entire
+                                                    .next()
+                                                    .and_then(|c| usize::from_str_radix(c, 10).ok())
+                                                    .unwrap_or(1),
+                                            );
                                             colors = Some(ColorOrMapVec::Color(vec![
-                                                Color::try_from_hex_str(&buff)?,
+                                                Color::try_from_hex_str(
+                                                    &entire.next().ok_or_else(|| {
+                                                        TranError::ConfigError(
+                                                            "Failed to parse color value"
+                                                                .to_string(),
+                                                        )
+                                                    })?,
+                                                )?,
                                             ]));
                                             buff.clear();
                                         }
                                     },
                                     Mode::Map => {
-                                        let color_map = buff
-                                            .split('#')
+                                        let mut entire = buff.split('#');
+                                        weights.push(
+                                            entire
+                                                .next()
+                                                .and_then(|c| usize::from_str_radix(c, 10).ok())
+                                                .unwrap_or(1),
+                                        );
+                                        let color_map = entire
                                             .map(Color::try_from_hex_str)
-                                            .collect::<Result<Vec<Color>, TranError>>()?;
+                                            .collect::<Result<Vec<Color>, TranError>>(
+                                        )?;
                                         match &mut colors {
                                             Some(c) => {
                                                 if let ColorOrMapVec::Map(v) = c {
@@ -337,13 +416,10 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                                         buff.clear();
                                     }
                                     Mode::Map => {
-                                        let c = buff.split('#');
                                         current_color = ColorOrMap::Map(
-                                            c.map(Color::try_from_hex_str).collect::<Result<
-                                                Vec<Color>,
-                                                TranError,
-                                            >>(
-                                            )?,
+                                            buff.split('#')
+                                                .map(Color::try_from_hex_str)
+                                                .collect::<Result<Vec<Color>, TranError>>()?,
                                         );
                                     }
                                 }
@@ -479,6 +555,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                 current_color,
                 target_files,
                 colors,
+                weights,
                 overwrite,
             }))
         }
@@ -488,6 +565,7 @@ pub fn parse_config<T: AsRef<Path>>(target: T) -> Result<Config, TranError> {
                 target_files,
                 colors,
                 overwrite,
+                weights,
             }))
         }
         (_, _, _) => Err(TranError::ConfigError("Inconsistent state".to_string())),
